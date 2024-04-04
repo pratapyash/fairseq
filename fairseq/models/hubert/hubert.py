@@ -191,12 +191,6 @@ class HubertConfig(FairseqDataclass):
         default=16,
         metadata={"help": "number of groups for convolutional positional embedding"},
     )
-    conv_pos_batch_norm: bool = field(
-        default=False,
-        metadata={
-            "help": "use batch norm instead of weight norm in conv_pos (for bf16 models)"
-        },
-    )
 
     latent_temp: Tuple[float, float, float] = field(
         default=(2, 0.5, 0.999995),
@@ -438,6 +432,7 @@ class HubertModel(BaseFairseqModel):
         mask: bool = True,
         features_only: bool = False,
         output_layer: Optional[int] = None,
+        return_attention: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """output layer is 1-based"""
         features = self.forward_features(source)
@@ -470,14 +465,35 @@ class HubertModel(BaseFairseqModel):
         # x: (B, T, D), float
         # padding_mask: (B, T), bool
         # mask_indices: (B, T), bool
-        x, _ = self.encoder(
-            x,
-            padding_mask=padding_mask,
-            layer=None if output_layer is None else output_layer - 1,
-        )
+        if return_attention:
+            x, _, attn_lr = self.encoder(
+                x,
+                padding_mask=padding_mask,
+                layer=None if output_layer is None else output_layer - 1,
+                return_attention=return_attention,
+            )
+        else:
+            x, _ = self.encoder(
+                x,
+                padding_mask=padding_mask,
+                layer=None if output_layer is None else output_layer - 1,
+                return_attention=return_attention,
+            )
+        # x: (B, T, D), float
 
+        # CHANGES IN SOURCE CODE 
+
+        if features_only and mask:
+            if return_attention:
+                return {"x": x, "padding_mask": padding_mask, "features": features, "mask_indices": mask_indices, "unmasked_features": unmasked_features, "attn_lr": attn_lr}
+            else:
+                return {"x": x, "padding_mask": padding_mask, "features": features, "mask_indices": mask_indices, "unmasked_features": unmasked_features}
+        # CHANGES IN SOURCE CODE 
         if features_only:
-            return {"x": x, "padding_mask": padding_mask, "features": features}
+            if return_attention:
+                return {"x": x, "padding_mask": padding_mask, "features": features, "unmasked_features": unmasked_features, "attn_lr": attn_lr}
+            else:
+                return {"x": x, "padding_mask": padding_mask, "features": features, "unmasked_features": unmasked_features}
 
         def compute_pred(proj_x, target, label_embs):
             # compute logits for the i-th label set
